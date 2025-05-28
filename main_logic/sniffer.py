@@ -1,5 +1,6 @@
-from os import write
-
+import uuid
+import json
+from datetime import datetime
 import scapy.all as scapy
 from scapy.all import Raw
 import os
@@ -10,15 +11,19 @@ from scapy.layers.dns import DNS, DNSQR
 from tqdm import tqdm
 from colorama import Fore, Style
 
-requests = []
-requests.clear()
+def request_saver(request):
+    if request:
+        request_id = str(uuid.uuid4())
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        request_data = {
+            'request_id': request_id,
+            'timestamp': timestamp,
+            'request': request
+        }
+        with open('requests.json', 'a', encoding='utf-8') as f:
+            f.write(json.dumps(request_data, ensure_ascii=False) + '\n')
 
-def packets_saver(packet):
-    request_id = len(requests) + 1
-    request = {request_id: packet}
-    requests.append(request)
-
-def get_process_by_port(port):
+def get_process(port):
     for conn in psutil.net_connections(kind='inet'):
         if conn.laddr and conn.laddr.port == port:
             pid = conn.pid
@@ -38,25 +43,38 @@ def packet_process(packet):
                 domain = dns.qd.qname.decode('utf-8').rstrip('.')
                 if domain and 'HTTP' not in domain and (all(i.isprintable() for i in domain)) and '.' in domain:
                     if packet.haslayer(UDP):
-                        app_name = get_process_by_port(packet[UDP].sport)
+                        app_name = get_process(packet[UDP].sport)
                         src_port = packet[UDP].sport
                         dst_port = packet[UDP].dport
                     else:
-                        app_name = get_process_by_port(packet[TCP].sport)
+                        app_name = get_process(packet[TCP].sport)
                         src_port = packet[TCP].sport
                         dst_port = packet[TCP].dport
 
-                    tqdm.write(f'{Fore.MAGENTA}||'f'{Fore.LIGHTRED_EX} {src_port} -> {dst_port} '
-                               f'{Fore.MAGENTA}|'f'{Fore.LIGHTBLUE_EX} URL: {domain}'f'{Fore.MAGENTA} '
-                               f'{Fore.MAGENTA}|'f'{Fore.LIGHTGREEN_EX} APP: {app_name} {Style.RESET_ALL}'
-                               f'{Fore.MAGENTA}||')
+                    request = {
+                        'src_dst': f'{src_port} -> {dst_port}',
+                        'url': f'{domain}',
+                        'app_name': f'{app_name}'
+                    }
+
+                    tqdm.write(f'{Fore.MAGENTA}||'
+                               f'{Fore.LIGHTRED_EX} {src_port} -> {dst_port} '
+                               f'{Fore.MAGENTA}|'
+                               f'{Fore.LIGHTBLUE_EX} URL: {domain} '
+                               f'{Fore.MAGENTA}|'
+                               f'{Fore.LIGHTGREEN_EX}'
+                               f' APP: {app_name} '
+                               f'{Fore.MAGENTA}||{Style.RESET_ALL}')
+                    return request
+
         except Exception:
             pass
+    return None
 
 
 def params(packet):
-    packet_process(packet)
-    #packets_saver(packet)
+    request = packet_process(packet)
+    #request_saver(request)
 
 def sniffer():
     scapy.sniff(iface=os.getenv('INTERFACE'), store=False, promisc=True, prn=params)
